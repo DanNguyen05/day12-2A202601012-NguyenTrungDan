@@ -1,100 +1,128 @@
-# Lab 12 — Complete Production Agent
+# Lab 12 Complete Production Agent
 
-Kết hợp TẤT CẢ những gì đã học trong 1 project hoàn chỉnh.
+This folder contains the final Day 12 production-ready AI agent.
 
-## Checklist Deliverable
+## Features
 
-- [x] Dockerfile (multi-stage, < 500 MB)
-- [x] docker-compose.yml (agent + redis)
-- [x] .dockerignore
-- [x] Health check endpoint (`GET /health`)
-- [x] Readiness endpoint (`GET /ready`)
-- [x] API Key authentication
-- [x] Rate limiting
-- [x] Cost guard
-- [x] Config từ environment variables
-- [x] Structured logging
-- [x] Graceful shutdown
-- [x] Public URL ready (Railway / Render config)
+- FastAPI REST API with `POST /ask`
+- API key authentication through `X-API-Key`
+- Redis-backed conversation history
+- Redis-backed sliding-window rate limit: 10 requests/min/user
+- Redis-backed monthly cost guard: $10/month/user
+- `GET /health` liveness check
+- `GET /ready` readiness check
+- Structured JSON logging
+- Graceful shutdown through Uvicorn lifespan handling
+- Multi-stage Dockerfile with non-root runtime user
+- Docker Compose stack with Nginx, 3 scalable agent replicas, and Redis
+- Railway and Render deployment configs
 
----
+## Local Run
 
-## Cấu Trúc
-
-```
-06-lab-complete/
-├── app/
-│   ├── main.py         # Entry point — kết hợp tất cả
-│   ├── config.py       # 12-factor config
-│   ├── auth.py         # API Key + JWT
-│   ├── rate_limiter.py # Rate limiting
-│   └── cost_guard.py   # Budget protection
-├── Dockerfile          # Multi-stage, production-ready
-├── docker-compose.yml  # Full stack
-├── railway.toml        # Deploy Railway
-├── render.yaml         # Deploy Render
-├── .env.example        # Template
-├── .dockerignore
-└── requirements.txt
+```powershell
+docker compose up -d --build --scale agent=3
 ```
 
----
+The Nginx load balancer exposes the agent at:
 
-## Chạy Local
-
-```bash
-# 1. Setup
-cp .env.example .env
-
-# 2. Chạy với Docker Compose
-docker compose up
-
-# 3. Test
-curl http://localhost/health
-
-# 4. Lấy API key từ .env, test endpoint
-API_KEY=$(grep AGENT_API_KEY .env | cut -d= -f2)
-curl -H "X-API-Key: $API_KEY" \
-     -X POST http://localhost/ask \
-     -H "Content-Type: application/json" \
-     -d '{"question": "What is deployment?"}'
+```text
+http://localhost:8080
 ```
 
----
+## Test Commands
 
-## Deploy Railway (< 5 phút)
+Health:
 
-```bash
-# Cài Railway CLI
-npm i -g @railway/cli
-
-# Login và deploy
-railway login
-railway init
-railway variables set OPENAI_API_KEY=sk-...
-railway variables set AGENT_API_KEY=your-secret-key
-railway up
-
-# Nhận public URL!
-railway domain
+```powershell
+curl.exe http://localhost:8080/health
 ```
 
----
+Readiness:
 
-## Deploy Render
+```powershell
+curl.exe http://localhost:8080/ready
+```
 
-1. Push repo lên GitHub
-2. Render Dashboard → New → Blueprint
-3. Connect repo → Render đọc `render.yaml`
-4. Set secrets: `OPENAI_API_KEY`, `AGENT_API_KEY`
-5. Deploy → Nhận URL!
+Authentication should be required:
 
----
+```powershell
+curl.exe http://localhost:8080/ask
+```
 
-## Kiểm Tra Production Readiness
+Expected: HTTP `401`.
 
-```bash
+Ask with API key:
+
+```powershell
+Invoke-WebRequest `
+  -Uri http://localhost:8080/ask `
+  -Method POST `
+  -Headers @{ "X-API-Key" = "dev-key-change-me" } `
+  -ContentType "application/json" `
+  -Body '{"user_id":"test","question":"Hello"}'
+```
+
+Conversation history:
+
+```powershell
+Invoke-WebRequest `
+  -Uri http://localhost:8080/ask `
+  -Method POST `
+  -Headers @{ "X-API-Key" = "dev-key-change-me" } `
+  -ContentType "application/json" `
+  -Body '{"user_id":"alice","question":"My name is Alice"}'
+
+Invoke-WebRequest `
+  -Uri http://localhost:8080/ask `
+  -Method POST `
+  -Headers @{ "X-API-Key" = "dev-key-change-me" } `
+  -ContentType "application/json" `
+  -Body '{"user_id":"alice","question":"What is my name?"}'
+```
+
+Rate limit:
+
+```powershell
+for ($i=1; $i -le 12; $i++) {
+  Invoke-WebRequest `
+    -Uri http://localhost:8080/ask `
+    -Method POST `
+    -Headers @{ "X-API-Key" = "dev-key-change-me" } `
+    -ContentType "application/json" `
+    -Body "{`"user_id`":`"rate-test`",`"question`":`"Request $i`"}"
+}
+```
+
+Expected: first 10 requests return `200`; later requests return `429`.
+
+## Production Readiness Check
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
 python check_production_ready.py
 ```
 
-Script này kiểm tra tất cả items trong checklist và báo cáo những gì còn thiếu.
+Verified result:
+
+```text
+20/20 checks passed (100%)
+```
+
+## Deployment
+
+Use either:
+
+- `railway.toml` for Railway
+- `render.yaml` for Render Blueprint with Redis
+
+Required environment variables:
+
+- `PORT`
+- `ENVIRONMENT=production`
+- `AGENT_API_KEY`
+- `REDIS_URL`
+- `RATE_LIMIT_PER_MINUTE=10`
+- `MONTHLY_BUDGET_USD=10.0`
+- `OPENAI_API_KEY` optional; mock LLM works without it
+
+See the root `DEPLOYMENT.md` for public URL test commands and cloud deployment steps.
